@@ -1,0 +1,265 @@
+---
+title: "KIM_142089_Codes"
+output:
+  word_document: default
+  html_notebook: default
+---
+#Load the necessary packages
+```{r}
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(stopwords)
+Sys.setlocale("LC_ALL", "English")
+```
+
+#load the data into r
+```{r}
+Comments <- rbind.data.frame(Edukasyon_1)
+```
+
+#Import the Data Set (From Facepager)
+
+```{r}
+names(Comments)
+```
+
+#Remove Unnecessary Columns/Variables
+
+```{r}
+Comments.1 <- Comments[c(3)]
+```
+
+#Add an ID(Rownumber) to the data frame to facilitate conversion from tidy text to non-tidy text
+
+```{r}
+Comments.2 <- tibble::rowid_to_column(Comments.1, "ID")
+```
+
+#Tokenize the data frame
+
+```{r}
+Comments.3 <- Comments.2 %>%
+unnest_tokens(word, message)
+```
+
+#Frequencies of New Data Frame
+
+```{r}
+Frequencies <- Comments.3 %>%
+  count(word, sort=TRUE)
+```
+
+#Create Stopword Data Frame
+
+```{r}
+CustomStopwords <- tibble(word = c("ang","sa","ng","na","mga","at","https","t.co","rt","ay","kung","the","pa","to","naman","ito","ba","and","of","po","a","pag","rin","is","for","nga","in","o","mas","1","kinabukasan","up","si","yung","may","pero","of","di","kaya","ni","talaga","mag","yan","ano","pang","upang","din","this","eh","on","nag","lamang","daw","wag","are","that","kay","wow","pep","tout","e","pondo","an","itong","natin","nating","tayo","tayong","we","kami","namin","we","you","mo","ka","your","ko","ako","ating","my","i","nila","sila","niyo","nyo","kayo","nya","sony","gen","nang","para","ma","can","nasusukat","kanyang"))
+
+CustomStopwords <- tibble::rowid_to_column(CustomStopwords, "ID")
+```
+
+#Remove the New Stopwords
+
+```{r}
+Comments.4 <- Comments.3 %>%
+  anti_join(CustomStopwords, by = c("word" = "word"))
+```
+
+#Frequencies of New Data Frame
+
+```{r}
+Frequencies2 <- Comments.4 %>%
+  count(word, sort=TRUE)
+```
+
+#Start mutating:  stemming, lenghtening shortcuts, etc.
+
+```{r}
+Comments.5 <- Comments.4 %>% mutate(word = if_else(word %in% c("privilege","privileged"), "privileged", word))
+```
+
+#Tokenize the data frame
+
+```{r}
+Comments.6 <- Comments.5 %>%
+unnest_tokens(word, word)
+```
+
+#Frequencies of New Data Frame
+
+```{r}
+Frequencies3 <- Comments.6 %>%
+  count(word, sort=TRUE)
+```
+
+#save data frame
+
+```{r}
+write.csv(x=Comments.6,
+  file="C:/Users/khl/Desktop/Comments Cleaned.csv",
+  row.names = FALSE
+)
+```
+
+#DATA ANALYSIS
+
+#Co-occurrence
+
+```{r}
+library(widyr)
+word_pairs <- Comments.6 %>% pairwise_count(word, ID, sort = TRUE)
+```
+
+
+#VISUALIZE COLLOCATION
+
+```{r}
+library(ggraph)
+library(igraph)
+set.seed(12)
+word_pairs %>%  filter(n>200) %>% graph_from_data_frame() %>%
+  ggraph(layout="fr") + geom_edge_link(aes(edge_alpha = n), 
+                 show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 1) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+#Topicmodels 
+```{r}
+library(tm)
+Sys.setlocale("LC_ALL", "English")
+```
+
+```{r}
+library(topicmodels)
+Comments.6.dtm <- 
+Comments.6 %>%
+count(ID, word) %>%
+cast_dtm(ID, word, n)
+```
+
+
+
+## Accessing the terms of the DTM
+```{r}
+terms <- Terms(Comments.6.dtm)
+head(terms)
+```
+
+
+## Converting AP DTM into a tidy data frame
+
+```{r}
+library(dplyr)
+library(tidytext)
+ap_td <- tidy(Comments.6.dtm)
+```
+
+## AP_TD to Sentiments using BING 
+```{r}
+ap_sentiments <- ap_td %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word"))
+```
+
+
+```{r}
+library(ggplot2)
+ap_sentiments %>%
+ count(sentiment, term, wt = count) %>%
+ ungroup() %>%
+ filter(n >= 10) %>%
+ mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+ mutate(term = reorder(term, n)) %>%
+ ggplot(aes(term, n, fill = sentiment)) +
+ geom_bar(stat = "identity") +
+ ylab("Contribution to sentiment") +
+ coord_flip()
+```
+
+## Wordcloud : Most common positive and negative words
+```{r}
+library(reshape2)
+library(wordcloud)
+ap_sentiments_cloud <- ap_sentiments %>%
+  count(sentiment, term, wt = count,sort=TRUE) %>%
+ ungroup() %>%
+ filter(n >= 5) %>%
+  acast(term ~ sentiment, value.var = "n", fill = 0)
+jpeg(file = "comparison_cloud.jpg", width=600, height=600) 
+comparison.cloud(ap_sentiments_cloud,
+                 colors = c("red", "blue"),
+                 max.words = 700)
+dev.off()
+
+```
+
+## Wordcloud : The most common word in Associated Press 
+```{r}
+jpeg(file = "wordcloud.jpg", width=600, height=600)
+wordcloud(words = ap_td$term, 
+          freq = ap_td$count,
+          max.words = 200)
+dev.off()
+  
+```
+
+
+## Casting tidy dataframe into a matrix
+
+```{r}
+ap_dtm <- ap_td %>%
+cast_dtm(document, term, count)
+ap_dtm
+```
+
+
+
+
+# Topic Modeling
+
+![](topicModeling.jpg)
+
+# Latent Dirichlet Allocation
+
+```{r}
+library(topicmodels)
+
+# Fitting the model
+ap_lda <- LDA(Comments.6.dtm, k = 2, control = list(seed = 1234))
+ap_lda
+```
+
+
+## Exploring and interpreting the LDA model 
+
+```{r}
+library(tidytext)
+
+ap_topics <- tidy(ap_lda, matrix = "beta")
+ap_topics
+```
+
+```{r}
+# Finding the top 10
+ap_top_terms <- ap_topics %>%
+group_by(topic) %>%
+top_n(10, beta) %>%
+ungroup() %>%
+arrange(topic, -beta)
+ap_top_terms
+```
+
+# Visualization
+
+```{r}
+ap_top_terms %>%
+mutate(term = reorder(term, beta)) %>%
+ggplot(aes(term, beta, fill = factor(topic))) +
+geom_col(show.legend = FALSE) +
+facet_wrap(~ topic, scales = "free") +
+coord_flip()
+```
+
+
+
